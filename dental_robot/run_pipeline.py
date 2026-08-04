@@ -38,6 +38,7 @@ from lerobot.utils.utils import get_safe_torch_device
 
 
 def run_policy(robot, policy: ACTPolicy, duration_s: float):
+    """Run the ACT policy in a closed loop on the robot for `duration_s` seconds."""
     obs_features = hw_to_dataset_features(robot.observation_features, "observation", use_video=True)
     device = get_safe_torch_device(policy.config.device)
     policy.reset()
@@ -64,6 +65,7 @@ def run_policy(robot, policy: ACTPolicy, duration_s: float):
 
 
 def main():
+    """CLI entry point: align the base (phase 1) then run the ACT policy (phase 2)."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy_path", required=True, help="Trained ACT checkpoint directory")
     parser.add_argument("--duration", type=float, default=20.0, help="Policy run time (s)")

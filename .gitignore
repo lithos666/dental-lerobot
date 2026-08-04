@@ -93,6 +93,9 @@ celerybeat.pid
 .vscode/
 .devcontainer/
 
+# Qoder IDE cache
+.qoder/
+
 # JetBrains / PyCharm
 .idea/
 
@@ -170,6 +173,20 @@ data/*
 outputs/*
 # Portfolio figures are committed (see README)
 !outputs/figures/
+
+# Data backups: smoothing pre-smooth backups, dataset snapshots and any
+# *_backup*/ copies (e.g. data_dental_demo_backup) are large regenerable
+# artifacts - never commit them, at any directory depth.
+backups/
+**/backups/
+*_backup/
+*_backup*/
+**/*_backup/
+**/*_backup*/
+
+# Local calibration cache (see calibration_cache/README.md)
+calibration_cache/*
+!calibration_cache/README.md
 
 # Translations
 *.mo

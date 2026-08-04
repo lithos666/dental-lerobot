@@ -112,6 +112,7 @@ def export_joint_trajectories(dataset_root: Path, episode_index: int) -> None:
 
 
 def main():
+    """CLI entry point: teleoperate the arm and record LeRobot episodes."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

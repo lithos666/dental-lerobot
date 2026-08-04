@@ -54,7 +54,6 @@ geometry recorded here.
 
 import json
 import time
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -149,6 +148,7 @@ def _sample_marker_pose(
 
 
 def main():
+    """CLI entry point: calibrate the base-marker pose and canonical tooth pose."""
     # Pre-flight: pan mapping must already exist, because align_base will
     # later map the canonical azimuth back to shoulder_pan.
     if not PAN_MAPPING_FILE.exists():

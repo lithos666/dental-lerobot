@@ -83,6 +83,7 @@ def fit_pan_mapping(samples: list[tuple[float, float]]) -> dict:
 
 
 def main():
+    """CLI entry point: sweep the base yaw and fit the pan-angle mapping."""
     locator = ArucoLocator()
     # Calibration needs RAW per-frame poses, not smoothed ones: smoothing
     # against stale state would bias the (azimuth, pan) samples.

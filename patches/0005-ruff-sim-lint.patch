@@ -1,0 +1,82 @@
+diff --git a/src/lerobot/datasets/lerobot_dataset.py b/src/lerobot/datasets/lerobot_dataset.py
+index a869cb92..b6508103 100644
+--- a/src/lerobot/datasets/lerobot_dataset.py
++++ b/src/lerobot/datasets/lerobot_dataset.py
+@@ -823,10 +823,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
+                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
+                 None.
+         """
+-        if not episode_data:
+-            episode_buffer = self.episode_buffer
+-        else:
+-            episode_buffer = episode_data
++        episode_buffer = episode_data or self.episode_buffer
+ 
+         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
+ 
+diff --git a/src/lerobot/processor/observation_processor.py b/src/lerobot/processor/observation_processor.py
+index 7d63db23..d41f3415 100644
+--- a/src/lerobot/processor/observation_processor.py
++++ b/src/lerobot/processor/observation_processor.py
+@@ -149,9 +149,8 @@ class VanillaObservationProcessor(ObservationProcessor):
+                 continue
+ 
+             for old, new in exact_pairs.items():
+-                if key == old or key == f"observation.{old}":
+-                    if key in features:
+-                        features[new] = features.pop(key)
+-                        break
++                if (key == old or key == f"observation.{old}") and key in features:
++                    features[new] = features.pop(key)
++                    break
+ 
+         return features
+diff --git a/src/lerobot/processor/pipeline.py b/src/lerobot/processor/pipeline.py
+index 6e1b2a2c..9aec85fe 100644
+--- a/src/lerobot/processor/pipeline.py
++++ b/src/lerobot/processor/pipeline.py
+@@ -357,7 +357,7 @@ class RobotProcessor(ModelHubMixin):
+             ValueError: If the transition is not a valid EnvTransition format.
+         """
+         # Check if data is already an EnvTransition or needs conversion
+-        if isinstance(data, dict) and not all(isinstance(k, TransitionKey) for k in data.keys()):
++        if isinstance(data, dict) and not all(isinstance(k, TransitionKey) for k in data):
+             # It's a batch dict, convert it
+             called_with_batch = True
+             transition = self.to_transition(data)
+diff --git a/tests/processor/test_pipeline.py b/tests/processor/test_pipeline.py
+index 5665d5a7..743320fd 100644
+--- a/tests/processor/test_pipeline.py
++++ b/tests/processor/test_pipeline.py
+@@ -245,7 +245,7 @@ def test_step_through():
+     # Ensure all results are dicts (same format as input)
+     for result in results:
+         assert isinstance(result, dict)
+-        assert all(isinstance(k, TransitionKey) for k in result.keys())
++        assert all(isinstance(k, TransitionKey) for k in result)
+ 
+ 
+ def test_step_through_with_dict():
+@@ -1544,9 +1544,7 @@ def test_override_with_callables():
+ 
+             # Define a transform function
+             def double_values(x):
+-                if isinstance(x, (int, float)):
+-                    return x * 2
+-                elif isinstance(x, torch.Tensor):
++                if isinstance(x, (int, float, torch.Tensor)):
+                     return x * 2
+                 return x
+ 
+@@ -1702,9 +1700,8 @@ def test_from_pretrained_nonexistent_path():
+         RobotProcessor.from_pretrained("nonexistent-user/nonexistent-repo")
+ 
+     # Test with a local directory that exists but has no config files
+-    with tempfile.TemporaryDirectory() as tmp_dir:
+-        with pytest.raises(FileNotFoundError, match="No .json configuration files found"):
+-            RobotProcessor.from_pretrained(tmp_dir)
++    with tempfile.TemporaryDirectory() as tmp_dir, pytest.raises(FileNotFoundError, match="No .json configuration files found"):
++        RobotProcessor.from_pretrained(tmp_dir)
+ 
+ 
+ def test_save_load_with_custom_converter_functions():

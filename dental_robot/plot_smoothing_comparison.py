@@ -42,6 +42,7 @@ FPS = 30
 
 
 def main():
+    """CLI entry point: plot raw vs smoothed joint curves for one episode."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset_root", default="./data/dental")
     parser.add_argument("--episode", type=int, default=5, help="Episode index to compare")

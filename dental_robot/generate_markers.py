@@ -34,6 +34,7 @@ BORDER_PX = 60  # white quiet zone around the marker (required for detection)
 
 
 def main():
+    """CLI entry point: render the tooth/base ArUco marker images to disk."""
     OUT_DIR.mkdir(exist_ok=True)
     dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICT_ID)
     for marker_id, name in [(TOOTH_MARKER_ID, "tooth"), (BASE_MARKER_ID, "base")]:

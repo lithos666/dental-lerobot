@@ -270,6 +270,11 @@
       python -m dental_robot.plot_smoothing_comparison --episode 5
       输出到 outputs/smoothing_comparison_episode_5.png
 
+训练前置检查（已内置到 train_act.py，无需人工自查）：
+  训练启动前自动逐回合检测 action 轨迹粗糙度（二阶差分均值，阈值 0.05），
+  发现未平滑回合会立即中止训练并打印修复命令；加 --auto_smooth 可当场
+  自动平滑。详见 5.5。
+
 --------------------------------------------------------------------------------
 5.5 训练 ACT 策略
 --------------------------------------------------------------------------------
@@ -298,6 +303,9 @@
   --device cuda       强制使用 GPU（默认自动检测）
   --use_amp           CUDA 混合精度（更省显存、更快，有 GPU 就开）
   --wandb             开启 WandB 训练记录
+  --auto_smooth       平滑前置检查不通过时自动就地平滑数据集
+  --skip_smoothing_check  跳过平滑前置检查（仅限明确知道数据已平滑）
+  --smoothing_threshold 0.05  平滑检查的粗糙度阈值
 
 训练进度：每 100 步打印 loss/梯度/学习率，每 1000 步跑验证集，
           每 5000 步存一个 checkpoint。
@@ -339,6 +347,45 @@
   (3) 到达 duration 后策略退出，机械臂自动回收到起始姿态（预抬腕
       ID 4 → 归位 ID 2-6）。
 按 Ctrl+C 可随时中断。
+
+--------------------------------------------------------------------------------
+5.7 上游适配补丁（patches/）
+--------------------------------------------------------------------------------
+
+本仓库基于上游 huggingface/lerobot，适配修改全部收敛在 patches/ 目录
+（5 个 .patch + README.md + apply_patches.ps1），方便上游升级时重放：
+
+  0001-opencv-flip-horizontal   OpenCV 相机水平翻转支持（功能性，必须保留）
+  0002-motors-bus-retry         舵机总线读写重试机制（功能性，必须保留）
+  0003-so101-wraparound-guard   SO-101 关节环绕保护（功能性，必须保留）
+  0004-configs-windows-tempfile Windows 临时目录兼容（功能性，必须保留）
+  0005-ruff-sim-lint            纯 lint 修复（上游更新后可按需重做）
+
+上游同步流程：
+  (1) git checkout -b upstream-sync <新的上游提交>
+  (2) .\patches\apply_patches.ps1            # 批量重放全部补丁
+      .\patches\apply_patches.ps1 -CheckOnly  # 只预检不落盘
+  (3) 冲突时用 git apply --3way 三方合并，手工解完后继续下一个补丁
+  (4) 验证通过后合并回 main
+
+补丁基线为 origin/mypy_support（8b4dcb14）；适配文件变动后需重新生成：
+  git diff --output=patches\000X-xxx.patch 8b4dcb14 HEAD -- <涉及文件>
+  （注意：必须用 --output 参数，PowerShell 的 > 重定向会写 UTF-16 导致补丁失效）
+
+--------------------------------------------------------------------------------
+5.8 标定输出缓存（calibration_cache/）
+--------------------------------------------------------------------------------
+
+4 个标定产物（scene_camera_intrinsics.npz / pan_mapping.json /
+scene_geometry.json / start_pose.json）重标定费时，建议备份到本地
+calibration_cache/（该目录已被 .gitignore 排除，仅 README.md 入库）：
+
+    Copy-Item dental_robot\scene_camera_intrinsics.npz, dental_robot\pan_mapping.json, `
+              dental_robot\scene_geometry.json, dental_robot\start_pose.json `
+              -Destination calibration_cache\
+
+恢复（把备份拷回 dental_robot\ 即可）。完整说明见 calibration_cache/README.md。
+注意：缓存只对本机当前硬件有效，换相机/挪机位后必须重新标定。
 
 ================================================================================
 六、常见问题排查
@@ -454,7 +501,8 @@
   - 挪了基准码/基座 → 重标 pan 映射（约 10 分钟）；
     挪了场景相机 → 已录的 ACT 数据全部作废（最贵，千万别碰）；
   - 训练和部署必须使用同一套 config.py 参数（相机索引、marker 尺寸等）；
-  - 训练前必须先跑轨迹平滑（见 5.4），否则部署时舵机会复现采集抖动；
+  - 训练前必须完成轨迹平滑（见 5.4）；train_act.py 已内置平滑前置检查，
+    未平滑数据会被自动拦截（--auto_smooth 可自动修复）；
     追加采集后只平滑新增回合即可（--episodes）；
   - 机械臂回收顺序固定：预抬腕 ID 4 → 转底座 ID 1 → 归位 ID 2-6，
     严禁在钻头低位时旋转底座（会扫过牙模）；
@@ -462,7 +510,8 @@
     数据集目录内部严禁出现备份文件。
 
 ================================================================================
-  最后更新：2026-08-03
-  更新内容：数据目录统一至 data/；新增 5.4 训练前轨迹平滑步骤；
-            回收防碰撞顺序（预抬腕→底座对齐→归位）；新增平滑/备份/Hub 排查项
+  最后更新：2026-08-04
+  更新内容：5.4/5.5 训练平滑前置检查（--auto_smooth/--skip_smoothing_check）；
+            新增 5.7 上游适配补丁（patches/）、5.8 标定输出缓存（calibration_cache/）
+            （此前：数据目录统一至 data/；5.4 训练前轨迹平滑；回收防碰撞顺序）
 ================================================================================

@@ -57,7 +57,7 @@ is calibrated empirically once (see calibrate_pan_mapping.py).
 NOTE: images fed to this module must NOT be horizontally flipped. Mirroring
 reverses ArUco corner ordering and corrupts the pose estimate.
 
-References
+References:
 ----------
 [1] T. Collins and A. Bartoli, "Infinitesimal Plane-Based Pose Estimation
     (IPPE)", International Journal of Computer Vision, vol. 109, no. 3,
@@ -90,7 +90,6 @@ from dental_robot.config import (
     TOOTH_MARKER_ID,
     make_aruco_detector,
 )
-
 
 # ---------------------------------------------------------------------------
 # Tuning constants
@@ -229,6 +228,7 @@ class ArucoLocator:
     """
 
     def __init__(self, intrinsics_file: Path = INTRINSICS_FILE):
+        """Load scene-camera intrinsics and initialise the temporal smoother."""
         if not intrinsics_file.exists():
             raise FileNotFoundError(
                 f"Camera intrinsics not found: {intrinsics_file}\n"

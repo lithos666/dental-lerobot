@@ -55,6 +55,7 @@ ARM_JOINTS = [
 
 
 def main():
+    """CLI entry point: teleop the arm into the canonical pose and save it."""
     init_logging()
 
     robot = connect_follower(make_follower_config(with_cameras=False))

@@ -1,0 +1,43 @@
+diff --git a/src/lerobot/cameras/opencv/camera_opencv.py b/src/lerobot/cameras/opencv/camera_opencv.py
+index 3665a909..1507d86c 100644
+--- a/src/lerobot/cameras/opencv/camera_opencv.py
++++ b/src/lerobot/cameras/opencv/camera_opencv.py
+@@ -125,6 +125,7 @@ class OpenCVCamera(Camera):
+         self.new_frame_event: Event = Event()
+ 
+         self.rotation: int | None = get_cv2_rotation(config.rotation)
++        self.flip_horizontal: bool = config.flip_horizontal
+         self.backend: int = get_cv2_backend()
+ 
+         if self.height and self.width:
+@@ -370,6 +371,9 @@ class OpenCVCamera(Camera):
+         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
+             processed_image = cv2.rotate(processed_image, self.rotation)
+ 
++        if self.flip_horizontal:
++            processed_image = cv2.flip(processed_image, 1)
++
+         return processed_image
+ 
+     def _read_loop(self):
+diff --git a/src/lerobot/cameras/opencv/configuration_opencv.py b/src/lerobot/cameras/opencv/configuration_opencv.py
+index 3ac92de3..7e23db13 100644
+--- a/src/lerobot/cameras/opencv/configuration_opencv.py
++++ b/src/lerobot/cameras/opencv/configuration_opencv.py
+@@ -45,6 +45,8 @@ class OpenCVCameraConfig(CameraConfig):
+         height: Requested frame height in pixels for the color stream.
+         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
+         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
++        flip_horizontal: Whether to mirror the image horizontally (useful for webcams
++                         that output a mirrored view). Defaults to False.
+         warmup_s: Time reading frames before returning from connect (in seconds)
+ 
+     Note:
+@@ -54,6 +56,7 @@ class OpenCVCameraConfig(CameraConfig):
+     index_or_path: int | Path
+     color_mode: ColorMode = ColorMode.RGB
+     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
++    flip_horizontal: bool = False
+     warmup_s: int = 1
+ 
+     def __post_init__(self):

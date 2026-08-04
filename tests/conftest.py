@@ -84,5 +84,5 @@ def policy_feature_factory():
 
 def assert_contract_is_typed(features: dict[str, PolicyFeature]) -> None:
     assert isinstance(features, dict)
-    assert all(isinstance(k, str) for k in features.keys())
+    assert all(isinstance(k, str) for k in features)
     assert all(isinstance(v, PolicyFeature) for v in features.values())

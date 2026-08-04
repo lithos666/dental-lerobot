@@ -151,17 +151,17 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-            cls: Type[T],
-            pretrained_name_or_path: str | Path,
-            *,
-            force_download: bool = False,
-            resume_download: bool = None,
-            proxies: dict | None = None,
-            token: str | bool | None = None,
-            cache_dir: str | Path | None = None,
-            local_files_only: bool = False,
-            revision: str | None = None,
-            **policy_kwargs,
+        cls: Type[T],
+        pretrained_name_or_path: str | Path,
+        *,
+        force_download: bool = False,
+        resume_download: bool = None,
+        proxies: dict | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+        **policy_kwargs,
     ) -> T:
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None

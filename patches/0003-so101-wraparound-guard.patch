@@ -1,0 +1,59 @@
+diff --git a/src/lerobot/robots/so101_follower/so101_follower.py b/src/lerobot/robots/so101_follower/so101_follower.py
+index 31b06c2f..77e2ca71 100644
+--- a/src/lerobot/robots/so101_follower/so101_follower.py
++++ b/src/lerobot/robots/so101_follower/so101_follower.py
+@@ -59,6 +59,8 @@ class SO101Follower(Robot):
+             calibration=self.calibration,
+         )
+         self.cameras = make_cameras_from_configs(config.cameras)
++        # Track last known-good present position for wrap-around detection.
++        self._last_present_pos: dict[str, float] | None = None
+ 
+     @property
+     def _motors_ft(self) -> dict[str, type]:
+@@ -190,6 +192,11 @@ class SO101Follower(Robot):
+ 
+         return obs_dict
+ 
++    # Maximum plausible position change per control cycle (normalized units).
++    # At 30 Hz a STS3215 cannot physically move more than ~60 units; a jump
++    # larger than this threshold indicates a homing-offset wrap-around.
++    _WRAP_THRESHOLD = 100.0
++
+     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+         """Command arm to move to a target joint configuration.
+ 
+@@ -212,6 +219,33 @@ class SO101Follower(Robot):
+         # /!\ Slower fps expected due to reading from the follower.
+         if self.config.max_relative_target is not None:
+             present_pos = self.bus.sync_read("Present_Position")
++
++            # --- Wrap-around guard ------------------------------------------------
++            # Feetech STS3215 in POSITION mode reports positions in [0, 4095].
++            # The homing offset shifts the electrical zero, so when the shaft
++            # drifts past the wrap point the reported position jumps by ~4096
++            # counts in one cycle.  The normalization layer clamps this into
++            # [-100, 100], producing a large discontinuity that makes
++            # ensure_safe_goal_position push the goal in the WRONG direction.
++            #
++            # Detection: if any motor's normalized position changes by more than
++            # _WRAP_THRESHOLD between consecutive cycles, the reading is corrupt.
++            # Recovery: fall back to the last known-good position for clamping so
++            # the follower holds steady instead of reversing.
++            if self._last_present_pos is not None:
++                for motor, pos in present_pos.items():
++                    last = self._last_present_pos.get(motor)
++                    if last is not None and abs(pos - last) > self._WRAP_THRESHOLD:
++                        logger.warning(
++                            f"Position wrap-around detected on '{motor}': "
++                            f"{last:.1f} -> {pos:.1f} (delta={pos - last:.1f}). "
++                            f"Using last known-good position for safety clamp."
++                        )
++                        present_pos[motor] = last  # substitute good value
++
++            self._last_present_pos = dict(present_pos)
++            # -----------------------------------------------------------------------
++
+             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
+             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+ 

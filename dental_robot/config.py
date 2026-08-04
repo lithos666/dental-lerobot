@@ -96,6 +96,7 @@ START_POSE_FILE = _HERE / "start_pose.json"
 
 
 def make_scene_camera_config() -> OpenCVCameraConfig:
+    """Build the OpenCV config of the fixed scene camera (never mirrored)."""
     return OpenCVCameraConfig(
         index_or_path=SCENE_CAM_INDEX,
         width=CAM_WIDTH,
@@ -106,6 +107,7 @@ def make_scene_camera_config() -> OpenCVCameraConfig:
 
 
 def make_follower_config(with_cameras: bool = True, max_relative_target: float = 10.0) -> SO101FollowerConfig:
+    """Build the SO-101 follower config, optionally with both cameras attached."""
     cameras = {}
     if with_cameras:
         cameras = {

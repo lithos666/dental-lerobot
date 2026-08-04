@@ -54,6 +54,7 @@ from scipy.signal import savgol_filter
 
 from lerobot.datasets.compute_stats import compute_episode_stats
 from lerobot.datasets.utils import (
+    load_episodes,
     load_episodes_stats,
     load_info,
     serialize_dict,
@@ -88,44 +89,55 @@ def smooth_episode_arrays(
     return smoothed
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument("--dataset_root", default="./data/dental", help="Local dataset dir (default: ./data/dental)")
-    parser.add_argument("--window", type=int, default=15, help="Savitzky-Golay window in frames (odd; 15 = 0.5s at 30fps)")
-    parser.add_argument("--polyorder", type=int, default=2, help="Polynomial order for the Savitzky-Golay fit")
-    parser.add_argument("--keys", nargs="+", default=DEFAULT_KEYS, help="Features to smooth")
-    parser.add_argument("--episodes", type=int, nargs="+", default=None, help="Only smooth these episode indices")
-    parser.add_argument("--dry_run", action="store_true", help="Report jitter reduction without writing anything")
-    parser.add_argument("--backup", action="store_true", help="Copy original parquet files to <dataset_root>/../backups/<dataset_name>_pre_smooth (outside the dataset root, so it doesn't break save_episode's parquet count assertion)")
-    parser.add_argument("--export_csv", action="store_true", help="Re-export joint_trajectories/*.csv from smoothed data")
-    args = parser.parse_args()
+def smooth_dataset(
+    root: Path,
+    window: int = 15,
+    polyorder: int = 2,
+    keys: list[str] | None = None,
+    episodes: list[int] | None = None,
+    dry_run: bool = False,
+    backup: bool = False,
+    export_csv: bool = False,
+) -> tuple[float, float]:
+    """Savitzky-Golay smooth the joint trajectories of a local dataset in place.
 
-    if args.window % 2 == 0:
-        raise ValueError("--window must be odd")
+    This is the reusable core used both by the CLI (``main``) and by the
+    pre-training check in ``train_act.py``.  Returns ``(total_before,
+    total_after)`` summed jitter (roughness) across all processed episodes.
 
-    root = Path(args.dataset_root).resolve()
+    Args:
+        root: dataset root (contains data/, meta/).
+        window: Savitzky-Golay window in frames (must be odd).
+        polyorder: polynomial order for the fit.
+        keys: dataset features to smooth (default: action + observation.state).
+        episodes: restrict to these episode indices (default: all).
+        dry_run: report jitter reduction without writing anything.
+        backup: copy original parquet files to <root>/../backups/<name>_pre_smooth.
+        export_csv: re-export joint_trajectories/*.csv from smoothed data.
+    """
+    keys = keys if keys is not None else list(DEFAULT_KEYS)
+    if window % 2 == 0:
+        raise ValueError("window must be odd")
+
+    root = Path(root).resolve()
     info = load_info(root)
     features = info["features"]
-    for key in args.keys:
+    for key in keys:
         if key not in features:
             raise KeyError(f"Feature '{key}' not in dataset features: {list(features)}")
 
     # Locate episode parquet files from the meta (robust to chunking).
-    from lerobot.datasets.utils import load_episodes
-
     episodes_meta = load_episodes(root)
     episode_indices = sorted(episodes_meta.keys())
-    if args.episodes is not None:
-        episode_indices = [e for e in episode_indices if e in args.episodes]
+    if episodes is not None:
+        episode_indices = [e for e in episode_indices if e in episodes]
 
     chunk_size = info["chunks_size"]
     data_path_tpl = info["data_path"]
 
     print(f"Smoothing {len(episode_indices)} episode(s) under {root} "
-          f"(window={args.window}, polyorder={args.polyorder}, keys={args.keys})")
-    if args.dry_run:
+          f"(window={window}, polyorder={polyorder}, keys={keys})")
+    if dry_run:
         print("[dry_run] no files will be written")
 
     episodes_stats = load_episodes_stats(root)
@@ -139,24 +151,24 @@ def main():
             continue
 
         table = pq.read_table(parquet_path)
-        arrays = {key: np.array(table.column(key).to_pylist(), dtype=np.float32) for key in args.keys}
+        arrays = {key: np.array(table.column(key).to_pylist(), dtype=np.float32) for key in keys}
 
         before = sum(roughness(a) for a in arrays.values())
-        smoothed = smooth_episode_arrays(arrays, args.window, args.polyorder)
+        smoothed = smooth_episode_arrays(arrays, window, polyorder)
         after = sum(roughness(a) for a in smoothed.values())
         total_before += before
         total_after += after
         print(f"  episode {ep_idx}: jitter {before:.4f} -> {after:.4f} "
               f"({(1 - after / before) * 100 if before else 0:.1f}% reduced)")
 
-        if args.dry_run:
+        if dry_run:
             continue
 
         # Write the smoothed columns back, keeping every other column untouched.
         for key, arr in smoothed.items():
             col_idx = table.schema.get_field_index(key)
             table = table.set_column(col_idx, key, pa.array(arr.tolist(), type=table.schema.field(key).type))
-        if args.backup:
+        if backup:
             # Backups must live OUTSIDE dataset_root: save_episode() verifies
             # `rglob("*.parquet")` count == num_episodes, and a backup inside
             # the root would make the assertion fail.
@@ -168,11 +180,11 @@ def main():
 
         # Refresh the per-episode stats of the smoothed features (normalization
         # used by ACT training); video/image stats stay as they were.
-        subset_features = {key: features[key] for key in args.keys}
+        subset_features = {key: features[key] for key in keys}
         new_stats = compute_episode_stats(smoothed, subset_features)
         episodes_stats[ep_idx].update(new_stats)
 
-    if not args.dry_run:
+    if not dry_run:
         # Rewrite episodes_stats.jsonl (serialize_dict converts numpy -> lists).
         stats_records = [
             {"episode_index": ep_idx, "stats": serialize_dict(stats)}
@@ -181,12 +193,40 @@ def main():
         write_jsonlines(stats_records, root / EPISODES_STATS_PATH)
         print(f"Updated {root / EPISODES_STATS_PATH}")
 
-        if args.export_csv:
+        if export_csv:
             from dental_robot.record_episodes import export_joint_trajectories
 
             for ep_idx in episode_indices:
                 export_joint_trajectories(root, ep_idx)
 
+    return total_before, total_after
+
+
+def main():
+    """Parse CLI arguments and run :func:`smooth_dataset`."""
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--dataset_root", default="./data/dental", help="Local dataset dir (default: ./data/dental)")
+    parser.add_argument("--window", type=int, default=15, help="Savitzky-Golay window in frames (odd; 15 = 0.5s at 30fps)")
+    parser.add_argument("--polyorder", type=int, default=2, help="Polynomial order for the Savitzky-Golay fit")
+    parser.add_argument("--keys", nargs="+", default=DEFAULT_KEYS, help="Features to smooth")
+    parser.add_argument("--episodes", type=int, nargs="+", default=None, help="Only smooth these episode indices")
+    parser.add_argument("--dry_run", action="store_true", help="Report jitter reduction without writing anything")
+    parser.add_argument("--backup", action="store_true", help="Copy original parquet files to <dataset_root>/../backups/<dataset_name>_pre_smooth (outside the dataset root, so it doesn't break save_episode's parquet count assertion)")
+    parser.add_argument("--export_csv", action="store_true", help="Re-export joint_trajectories/*.csv from smoothed data")
+    args = parser.parse_args()
+
+    total_before, total_after = smooth_dataset(
+        Path(args.dataset_root),
+        window=args.window,
+        polyorder=args.polyorder,
+        keys=args.keys,
+        episodes=args.episodes,
+        dry_run=args.dry_run,
+        backup=args.backup,
+        export_csv=args.export_csv,
+    )
     print(f"\nTotal jitter: {total_before:.4f} -> {total_after:.4f} "
           f"({(1 - total_after / total_before) * 100 if total_before else 0:.1f}% reduced)")
     if args.dry_run:

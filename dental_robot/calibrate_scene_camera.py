@@ -34,6 +34,7 @@ MIN_VIEWS = 15
 
 
 def main():
+    """CLI entry point: chessboard intrinsics calibration of the scene camera."""
     camera = OpenCVCamera(make_scene_camera_config())
     camera.connect()
 

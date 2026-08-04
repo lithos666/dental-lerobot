@@ -58,6 +58,7 @@ LIFT_SETTLE_S = 0.02
 
 
 def load_mapping() -> dict:
+    """Load the calibrated pan-angle -> base-yaw mapping from disk."""
     if not PAN_MAPPING_FILE.exists():
         raise FileNotFoundError(
             f"Pan mapping not found: {PAN_MAPPING_FILE}\n"
@@ -252,6 +253,7 @@ def move_arm_to_start_pose(robot, do_pre_lift: bool = True) -> None:
 
 
 def main():
+    """CLI entry point: align the robot base to the ArUco scene marker."""
     camera = OpenCVCamera(make_scene_camera_config())
     camera.connect()
     robot = connect_follower(make_follower_config(with_cameras=False))

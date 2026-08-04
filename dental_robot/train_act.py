@@ -42,6 +42,12 @@ IMPORTANT: smooth the recorded joint trajectories before training. Raw
 teleoperated data contains servo jitter which the policy would otherwise
 reproduce at deployment time:
     python -m dental_robot.smooth_trajectories --dataset_root ./data/dental
+
+This script enforces that precondition automatically: before training it
+measures the per-episode joint jitter (mean |second derivative| of `action`)
+and refuses to start if episodes look unsmoothed.  Pass --auto_smooth to let
+it run the Savitzky-Golay smoothing in place, or --skip_smoothing_check to
+bypass the check deliberately (e.g. training on synthetic data).
 """
 
 import argparse
@@ -50,6 +56,8 @@ import shutil
 import time
 from pathlib import Path
 
+import numpy as np
+import pyarrow.parquet as pq
 import torch
 from torch.amp import GradScaler
 
@@ -65,6 +73,65 @@ from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import format_big_number, get_safe_torch_device, init_logging
 
 DEFAULT_OUTPUT_DIR = Path("outputs/train/act_dental")
+
+# Per-episode roughness above this value marks an episode as "not smoothed".
+# Measured on this project's data: smoothed episodes sit at <= 0.03 while raw
+# teleoperated ones are mostly >= 0.07, so 0.05 separates the two cleanly.
+SMOOTHING_ROUGHNESS_THRESHOLD = 0.05
+
+
+def ensure_trajectories_smoothed(
+    dataset_root: Path, threshold: float = SMOOTHING_ROUGHNESS_THRESHOLD, auto_smooth: bool = False
+) -> None:
+    """Guard against training on unsmoothed (jittery) teleoperated trajectories.
+
+    Detection: per-episode roughness of the `action` column (mean |second
+    discrete derivative|, same metric as smooth_trajectories.py).  The
+    pre-smooth backup directory doubles as a "smoothing already ran" marker.
+
+    On violation this either aborts with the exact smoothing command, or —
+    with ``auto_smooth=True`` — runs the Savitzky-Golay smoothing in place
+    before training proceeds.
+    """
+    from dental_robot.smooth_trajectories import roughness, smooth_dataset
+
+    root = dataset_root.resolve()
+    parquet_files = sorted((root / "data").rglob("episode_*.parquet"))
+    if not parquet_files:
+        logging.warning(f"Smoothing pre-check: no parquet files under {root / 'data'}, skipped")
+        return
+
+    jittery = []
+    for path in parquet_files:
+        actions = np.array(pq.read_table(path, columns=["action"]).column("action").to_pylist(), dtype=np.float32)
+        ep_roughness = roughness(actions)
+        if ep_roughness > threshold:
+            jittery.append((path.name, ep_roughness))
+
+    if not jittery:
+        backup_dir = root.parent / "backups" / f"{root.name}_pre_smooth"
+        marker = f" (backup marker: {backup_dir.name})" if backup_dir.exists() else ""
+        logging.info(f"Smoothing pre-check passed: {len(parquet_files)} episodes all below "
+                     f"roughness threshold {threshold}{marker}")
+        return
+
+    worst = max(r for _, r in jittery)
+    names = ", ".join(n for n, _ in jittery[:5]) + (", ..." if len(jittery) > 5 else "")
+    logging.warning(
+        f"Smoothing pre-check FAILED: {len(jittery)}/{len(parquet_files)} episode(s) exceed the "
+        f"jitter threshold ({threshold}); worst roughness {worst:.4f}. Episodes: {names}. "
+        "Raw servo jitter would be learned and reproduced by the policy at deployment time."
+    )
+    if auto_smooth:
+        logging.info("--auto_smooth set: running Savitzky-Golay smoothing in place before training")
+        smooth_dataset(root, backup=True)
+        return
+    raise RuntimeError(
+        "Dataset trajectories are not smoothed. Run first:\n"
+        f"    python -m dental_robot.smooth_trajectories --dataset_root {dataset_root} --backup\n"
+        "or re-launch training with --auto_smooth to do it automatically "
+        "(--skip_smoothing_check bypasses this guard entirely)."
+    )
 
 
 def make_policy_config(metadata: LeRobotDatasetMetadata, args: argparse.Namespace) -> ACTConfig:
@@ -187,6 +254,7 @@ def validate(policy: ACTPolicy, dataloader: torch.utils.data.DataLoader, device:
 
 
 def train(args: argparse.Namespace) -> None:
+    """Run the full ACT training loop with validation, checkpoints and logging."""
     init_logging()
     set_seed(args.seed)
     if args.device is None:
@@ -214,6 +282,8 @@ def train(args: argparse.Namespace) -> None:
 
     logging.info("Creating dataset")
     root = Path(args.dataset_root) if args.dataset_root else None
+    if root is not None and not args.skip_smoothing_check:
+        ensure_trajectories_smoothed(root, threshold=args.smoothing_threshold, auto_smooth=args.auto_smooth)
     metadata = LeRobotDatasetMetadata(args.dataset_repo_id, root=root)
     cfg = make_policy_config(metadata, args)
     if args.no_pretrained:
@@ -358,6 +428,7 @@ def train(args: argparse.Namespace) -> None:
 
 
 def main():
+    """CLI entry point: parse arguments and launch ACT training."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -383,6 +454,22 @@ def main():
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb_project", default="dental_robot", help="WandB project name")
     parser.add_argument("--no_pretrained", action="store_true", help="Skip pretrained ResNet18 weights (use when download fails)")
+    parser.add_argument(
+        "--auto_smooth",
+        action="store_true",
+        help="Run Savitzky-Golay trajectory smoothing automatically if the pre-check finds jittery episodes",
+    )
+    parser.add_argument(
+        "--skip_smoothing_check",
+        action="store_true",
+        help="Skip the trajectory smoothing pre-check (only for synthetic/pre-processed datasets)",
+    )
+    parser.add_argument(
+        "--smoothing_threshold",
+        type=float,
+        default=SMOOTHING_ROUGHNESS_THRESHOLD,
+        help=f"Per-episode roughness threshold for the smoothing pre-check (default: {SMOOTHING_ROUGHNESS_THRESHOLD})",
+    )
     args = parser.parse_args()
     train(args)
 

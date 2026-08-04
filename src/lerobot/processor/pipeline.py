@@ -357,7 +357,7 @@ class RobotProcessor(ModelHubMixin):
             ValueError: If the transition is not a valid EnvTransition format.
         """
         # Check if data is already an EnvTransition or needs conversion
-        if isinstance(data, dict) and not all(isinstance(k, TransitionKey) for k in data.keys()):
+        if isinstance(data, dict) and not all(isinstance(k, TransitionKey) for k in data):
             # It's a batch dict, convert it
             called_with_batch = True
             transition = self.to_transition(data)

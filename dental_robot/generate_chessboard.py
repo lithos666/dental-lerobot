@@ -17,7 +17,6 @@ even if the print driver applies "fit to page" the chessboard is sized
 correctly *only if* you choose A4 and "actual size / 100%" in the dialog.
 If your printer insists on scaling, prefer PNG + "actual size" instead.
 """
-import math
 from pathlib import Path
 
 from reportlab.lib.pagesizes import A4
@@ -45,6 +44,7 @@ def draw_chessboard(c: pdf_canvas.Canvas, x0: float, y0: float, square_mm: float
 
 
 def main():
+    """CLI entry point: render the calibration chessboard to a printable PDF."""
     cols_inner, rows_inner = CHESSBOARD
     cols_squares = cols_inner + 1
     rows_squares = rows_inner + 1
@@ -100,7 +100,7 @@ def main():
     c.drawString(bar_x - 9 * mm, bar_y + 100 * mm, "100mm")
 
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(x0, y0 - 8 * mm, f"Each black square = 25 mm (verify with ruler!)")
+    c.drawString(x0, y0 - 8 * mm, "Each black square = 25 mm (verify with ruler!)")
     c.showPage()
     c.save()
 

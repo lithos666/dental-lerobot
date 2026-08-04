@@ -1,0 +1,90 @@
+diff --git a/src/lerobot/motors/feetech/feetech.py b/src/lerobot/motors/feetech/feetech.py
+index 88d45ba3..eb4e037c 100644
+--- a/src/lerobot/motors/feetech/feetech.py
++++ b/src/lerobot/motors/feetech/feetech.py
+@@ -427,14 +427,15 @@ class FeetechMotorsBus(MotorsBus):
+     def _read_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, str]:
+         firmware_versions = {}
+         for id_ in motor_ids:
++            # num_retry for flaky USB-serial adapters (e.g. CH343) that intermittently drop packets
+             firm_ver_major, comm, error = self._read(
+-                *FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error
++                *FIRMWARE_MAJOR_VERSION, id_, num_retry=3, raise_on_error=raise_on_error
+             )
+             if not self._is_comm_success(comm) or self._is_error(error):
+                 continue
+ 
+             firm_ver_minor, comm, error = self._read(
+-                *FIRMWARE_MINOR_VERSION, id_, raise_on_error=raise_on_error
++                *FIRMWARE_MINOR_VERSION, id_, num_retry=3, raise_on_error=raise_on_error
+             )
+             if not self._is_comm_success(comm) or self._is_error(error):
+                 continue
+diff --git a/src/lerobot/motors/motors_bus.py b/src/lerobot/motors/motors_bus.py
+index 97830fc3..b2692116 100644
+--- a/src/lerobot/motors/motors_bus.py
++++ b/src/lerobot/motors/motors_bus.py
+@@ -374,7 +374,8 @@ class MotorsBus(abc.ABC):
+ 
+         found_models = {}
+         for id_ in self.ids:
+-            model_nb = self.ping(id_)
++            # Retry pings: some USB-serial adapters (e.g. CH343) intermittently drop status packets
++            model_nb = self.ping(id_, num_retry=3)
+             if model_nb is not None:
+                 found_models[id_] = model_nb
+ 
+@@ -1056,7 +1057,7 @@ class MotorsBus(abc.ABC):
+         motors: str | list[str] | None = None,
+         *,
+         normalize: bool = True,
+-        num_retry: int = 0,
++        num_retry: int = 1,
+     ) -> dict[str, Value]:
+         """Read the same register from several motors at once.
+ 
+@@ -1104,7 +1105,7 @@ class MotorsBus(abc.ABC):
+         length: int,
+         motor_ids: list[int],
+         *,
+-        num_retry: int = 0,
++        num_retry: int = 1,
+         raise_on_error: bool = True,
+         err_msg: str = "",
+     ) -> tuple[dict[int, int], int]:
+@@ -1113,7 +1114,7 @@ class MotorsBus(abc.ABC):
+             comm = self.sync_reader.txRxPacket()
+             if self._is_comm_success(comm):
+                 break
+-            logger.debug(
++            logger.info(
+                 f"Failed to sync read @{addr=} ({length=}) on {motor_ids=} ({n_try=}): "
+                 + self.packet_handler.getTxRxResult(comm)
+             )
+@@ -1151,7 +1152,7 @@ class MotorsBus(abc.ABC):
+         values: Value | dict[str, Value],
+         *,
+         normalize: bool = True,
+-        num_retry: int = 0,
++        num_retry: int = 1,
+     ) -> None:
+         """Write the same register on multiple motors.
+ 
+@@ -1192,7 +1193,7 @@ class MotorsBus(abc.ABC):
+         addr: int,
+         length: int,
+         ids_values: dict[int, int],
+-        num_retry: int = 0,
++        num_retry: int = 1,
+         raise_on_error: bool = True,
+         err_msg: str = "",
+     ) -> int:
+@@ -1201,7 +1202,7 @@ class MotorsBus(abc.ABC):
+             comm = self.sync_writer.txPacket()
+             if self._is_comm_success(comm):
+                 break
+-            logger.debug(
++            logger.info(
+                 f"Failed to sync write @{addr=} ({length=}) with {ids_values=} ({n_try=}): "
+                 + self.packet_handler.getTxRxResult(comm)
+             )

@@ -191,7 +191,7 @@ exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
 # N: pep8-naming
 # TODO: Uncomment rules when ready to use
 select = [
-    "E", "W", "F", "I", "B", "C4", "T20", "N" # "SIM", "A", "S", "D", "RUF", "UP"
+    "E", "W", "F", "I", "B", "C4", "T20", "N", "SIM", "D" # "A", "S", "RUF", "UP"
 ]
 ignore = [
     "E501", # Line too long
@@ -202,6 +202,17 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403"]
+# D (pydocstyle) is being rolled out gradually: enforced today only in
+# dental_robot/, silenced in the upstream-derived tree until it is migrated.
+"src/**" = ["D"]
+"tests/**" = ["D"]
+"examples/**" = ["D"]
+"benchmarks/**" = ["D"]
+# Geometry code follows linear-algebra naming conventions (R, U, Vt rotation/SVD matrices).
+"dental_robot/aruco_locator.py" = ["N803", "N806"]
+"dental_robot/calibrate_scene_geometry.py" = ["N803", "N806"]
+# Standalone script: needs the sys.path bootstrap before project imports.
+"dental_robot/demo_tracking.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true

@@ -43,11 +43,13 @@ FIG_DPI = 150
 
 
 def load_episode(root: Path, ep: int) -> np.ndarray:
+    """Read the action array of one episode parquet file."""
     path = root / "data" / f"chunk-{ep // 1000:03d}" / f"episode_{ep:06d}.parquet"
     return np.array(pq.read_table(path).column("action").to_pylist(), dtype=np.float32)
 
 
 def fig_dataset_overview(root: Path, episodes: dict, out: Path) -> None:
+    """Plot episode lengths, joint-angle and velocity distributions plus a summary card."""
     lengths = {ep: len(traj) / FPS for ep, traj in episodes.items()}
     all_actions = np.concatenate(list(episodes.values()), axis=0)
 
@@ -106,7 +108,7 @@ def fig_dataset_overview(root: Path, episodes: dict, out: Path) -> None:
         f"Training:          50K steps, RTX 3060, AMP"
     )
     ax.text(0.05, 0.95, summary, fontsize=11, family="monospace",
-            va="top", bbox=dict(boxstyle="round", fc="#f0f4f8", ec="#4878cf"))
+            va="top", bbox={"boxstyle": "round", "fc": "#f0f4f8", "ec": "#4878cf"})
 
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out, dpi=FIG_DPI)
@@ -115,12 +117,13 @@ def fig_dataset_overview(root: Path, episodes: dict, out: Path) -> None:
 
 
 def fig_joint_trajectories(episodes: dict, out: Path) -> None:
+    """Plot all demonstrated trajectories overlaid, one subplot per joint."""
     fig, axes = plt.subplots(6, 1, figsize=(13, 11), sharex=True)
     fig.suptitle("Demonstrated Joint Trajectories — all episodes overlaid",
                  fontsize=14, fontweight="bold")
     for j, name in enumerate(JOINT_NAMES):
         ax = axes[j]
-        for ep, traj in episodes.items():
+        for traj in episodes.values():
             t = np.arange(len(traj)) / FPS
             ax.plot(t, traj[:, j], color=JOINT_COLORS[j], alpha=0.28, lw=0.8)
         ax.set_ylabel(f"{name}\n(deg)", fontsize=9)
@@ -183,6 +186,7 @@ def _read_frames(video_path: Path, ratios=(0.1, 0.5, 0.9)) -> list:
 
 
 def fig_task_keyframes(root: Path, episode: int, out: Path) -> None:
+    """Extract start/mid/end video frames from both cameras into a key-frame grid."""
     cams = {"Scene camera (fixed)": "observation.images.fixed",
             "Hand-eye camera (wrist)": "observation.images.handeye"}
     ratios = (0.1, 0.5, 0.9)
@@ -210,6 +214,7 @@ def fig_task_keyframes(root: Path, episode: int, out: Path) -> None:
 
 
 def fig_training_curves(output_dir: Path, out: Path) -> None:
+    """Plot train/val loss curves from the recorded train_metrics.csv."""
     csv_path = output_dir / "train_metrics.csv"
     if not csv_path.is_file():
         print("[fig] training_curves skipped: outputs/train/act_dental/train_metrics.csv "
@@ -258,6 +263,7 @@ def fig_training_curves(output_dir: Path, out: Path) -> None:
 
 
 def main() -> None:
+    """CLI entry point: generate all portfolio figures into the output dir."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset_root", default="./data/dental")
     parser.add_argument("--episode", type=int, default=49,

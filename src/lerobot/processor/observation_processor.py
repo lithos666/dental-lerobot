@@ -149,9 +149,8 @@ class VanillaObservationProcessor(ObservationProcessor):
                 continue
 
             for old, new in exact_pairs.items():
-                if key == old or key == f"observation.{old}":
-                    if key in features:
-                        features[new] = features.pop(key)
-                        break
+                if (key == old or key == f"observation.{old}") and key in features:
+                    features[new] = features.pop(key)
+                    break
 
         return features

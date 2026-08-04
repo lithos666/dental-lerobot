@@ -52,7 +52,6 @@ from dental_robot.align_base import load_mapping
 from dental_robot.aruco_locator import ArucoLocator
 from dental_robot.config import (
     BASE_MARKER_ID,
-    TOOTH_MARKER_ID,
     connect_follower,
     make_follower_config,
     make_scene_camera_config,
@@ -126,6 +125,7 @@ def align_once(robot, locator, camera) -> bool:
 
 
 def main():
+    """CLI entry point: interactive ArUco azimuth-tracking demo with HUD."""
     print("=" * 60)
     print("Demo: azimuth tracking")
     print("=" * 60)
@@ -164,7 +164,7 @@ def main():
                 # Annotate which marker is which.
                 if corners:
                     flat = ids.flatten()
-                    for c, mid in zip(corners, flat):
+                    for c, mid in zip(corners, flat, strict=False):
                         center = c.reshape(4, 2).mean(axis=0).astype(int)
                         label = "BASE" if mid == BASE_MARKER_ID else "TOOTH"
                         cv2.putText(bgr, f"ID{mid} {label}", tuple(center),
