@@ -423,11 +423,14 @@ class ArucoLocator:
     def _relative_consistent(
         self, base_pose: np.ndarray, tooth_pose: np.ndarray
     ) -> bool:
-        """Median-based outlier check on the base->tooth relative transform."""
+        """Median-based outlier check on the base->tooth relative transform.
+
+        The current transform is checked against the rolling median BEFORE
+        being appended, so an outlier does not pollute the buffer.
+        """
         rel = invert_rigid_transform(base_pose) @ tooth_pose
-        # Compare rotation component to the rolling median via geodesic dist.
-        self._rel_history.append(rel)
         if len(self._rel_history) < MIN_CONSISTENT_SAMPLES:
+            self._rel_history.append(rel)
             return True
         # Use element-wise median of the history as a robust centre.
         stacked = np.stack(list(self._rel_history))
@@ -438,7 +441,10 @@ class ArucoLocator:
         delta = rel[:3, :3] @ median_rot.T
         trace = np.clip((np.trace(delta) - 1.0) / 2.0, -1.0, 1.0)
         angle = float(np.arccos(trace))
-        return angle < CONSISTENCY_RAD
+        consistent = angle < CONSISTENCY_RAD
+        if consistent:
+            self._rel_history.append(rel)
+        return consistent
 
     def tooth_azimuth_deg(self, image_rgb: np.ndarray) -> float | None:
         """Azimuth (deg) of the tooth marker in the base marker frame, or None."""
@@ -460,24 +466,64 @@ class ArucoLocator:
         self._last_azimuth = az
         return az
 
-    def averaged_azimuth_deg(self, grab_frame: Callable[[], np.ndarray], n_frames: int = 10) -> float:
+    def averaged_azimuth_deg(
+        self, grab_frame: Callable[[], np.ndarray], n_frames: int = 10, *, show_debug: bool = True
+    ) -> float:
         """Circular-mean azimuth over several frames. `grab_frame` returns an RGB image.
+
+        When detection fails and *show_debug* is True, a live preview window is
+        opened so the user can inspect what the camera actually sees (markers
+        drawn, IDs labelled).  Press any key or close the window to dismiss.
 
         Raises RuntimeError if the markers are not reliably visible.
         """
         samples = []
+        last_frame: np.ndarray | None = None
         for _ in range(n_frames):
-            az = self.tooth_azimuth_deg(grab_frame())
+            frame = grab_frame()
+            last_frame = frame
+            az = self.tooth_azimuth_deg(frame)
             if az is not None:
                 samples.append(az)
         if len(samples) < n_frames // 2:
-            raise RuntimeError(
+            msg = (
                 f"Markers detected in only {len(samples)}/{n_frames} frames. "
                 "Check lighting, marker visibility, and that the scene camera "
                 "image is not flipped."
             )
+            if show_debug and last_frame is not None:
+                self._show_debug_preview(grab_frame)
+            raise RuntimeError(msg)
         # Circular mean: a plain np.mean is wrong near the +/-180 deg seam.
         return circular_mean_deg(np.array(samples, dtype=np.float64))
+
+    # ------------------------------------------------------------------
+    # Debug preview
+    # ------------------------------------------------------------------
+    def _show_debug_preview(self, grab_frame: Callable[[], np.ndarray], duration_s: float = 0) -> None:
+        """Open a live cv2 window showing marker detection overlay.
+
+        If *duration_s* <= 0 the window stays open until the user presses any
+        key or closes it.  This lets the operator visually diagnose why ArUco
+        detection is failing (wrong camera, bad lighting, flipped image, etc.).
+        """
+        win_name = "ArUco Debug — press any key to close"
+        cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+        print("[aruco_debug] Opening live preview — press any key in the window to close...")
+        try:
+            while True:
+                frame = grab_frame()
+                bgr = self.draw_debug(frame)
+                cv2.imshow(win_name, bgr)
+                key = cv2.waitKey(30) & 0xFF
+                if key not in (0, 255):  # any key pressed
+                    break
+                if duration_s > 0:
+                    duration_s -= 0.03
+                    if duration_s <= 0:
+                        break
+        finally:
+            cv2.destroyWindow(win_name)
 
     def draw_debug(self, image_rgb: np.ndarray) -> np.ndarray:
         """Return a BGR image with detected markers and axes drawn (for cv2.imshow)."""

@@ -21,6 +21,7 @@ Plan C architecture:
     the fine insertion motion with visual closed-loop feedback.
 """
 
+import time
 from pathlib import Path
 
 import cv2
@@ -88,6 +89,10 @@ PAN_MAPPING_FILE = _HERE / "pan_mapping.json"
 # and consumed by align_base / run_pipeline to guarantee that the ACT
 # policy always starts from the same spatial configuration.
 SCENE_GEOMETRY_FILE = _HERE / "scene_geometry.json"
+# Canonical arm start pose (ID 2-6): saved by calibrate_start_pose.py,
+# consumed by record_episodes.py and run_pipeline.py to auto-reset the
+# arm joints after each ArUco base alignment.
+START_POSE_FILE = _HERE / "start_pose.json"
 
 
 def make_scene_camera_config() -> OpenCVCameraConfig:
@@ -128,11 +133,24 @@ def make_follower_config(with_cameras: bool = True, max_relative_target: float =
     )
 
 
+def _write_calibration_with_retry(bus, calibration, max_retries: int = 3, delay_s: float = 0.3) -> None:
+    """Retry write_calibration to handle flaky CH343 serial bus on Windows."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            bus.write_calibration(calibration)
+            return
+        except RuntimeError as exc:
+            print(f"[calibration] write attempt {attempt}/{max_retries} failed: {exc}")
+            if attempt == max_retries:
+                raise
+            time.sleep(delay_s)
+
+
 def connect_follower(config: SO101FollowerConfig) -> SO101Follower:
     """Connect bypassing the flaky per-motor ping handshake (CH343 adapter)."""
     robot = SO101Follower(config)
     robot.bus.connect(handshake=False)
-    robot.bus.write_calibration(robot.calibration)
+    _write_calibration_with_retry(robot.bus, robot.calibration)
     for cam in robot.cameras.values():
         cam.connect()
     robot.configure()
@@ -146,6 +164,6 @@ def connect_leader() -> SO101Leader:
     """
     teleop = SO101Leader(SO101LeaderConfig(port=LEADER_PORT, id=LEADER_ID))
     teleop.bus.connect(handshake=False)
-    teleop.bus.write_calibration(teleop.calibration)
+    _write_calibration_with_retry(teleop.bus, teleop.calibration)
     teleop.configure()
     return teleop

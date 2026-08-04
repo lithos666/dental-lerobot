@@ -27,7 +27,7 @@ import time
 
 import cv2
 
-from dental_robot.align_base import align_base
+from dental_robot.align_base import align_base, move_arm_to_start_pose
 from dental_robot.aruco_locator import ArucoLocator
 from dental_robot.config import FPS, connect_follower, make_follower_config
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
@@ -80,12 +80,22 @@ def main():
             # Reuse the robot's un-flipped "fixed" camera stream for detection.
             grab_frame = robot.cameras["fixed"].read
             align_base(robot, grab_frame, locator=locator)
+            move_arm_to_start_pose(robot)
             time.sleep(0.5)  # let the scene settle before handing over to ACT
         run_policy(robot, policy, args.duration)
+
+        # Return arm joints (ID 2-6) to the calibrated start pose so the
+        # robot is ready for the next run without manual repositioning.
+        print("[pipeline] returning to start pose...")
+        move_arm_to_start_pose(robot)
+        print("[pipeline] done — arm at start pose")
     except KeyboardInterrupt:
         print("\nInterrupted by user")
     finally:
-        robot.disconnect()
+        try:
+            robot.disconnect()
+        except RuntimeError as exc:
+            print(f"[pipeline] robot disconnect error (non-fatal): {exc}")
         cv2.destroyAllWindows()
 
 

@@ -149,7 +149,10 @@ def main():
                 robot.send_action({"shoulder_pan.pos": pan + step})
     finally:
         camera.disconnect()
-        robot.bus.disconnect()
+        try:
+            robot.disconnect()
+        except RuntimeError as exc:
+            print(f"[pan_mapping] robot disconnect error (non-fatal): {exc}")
         cv2.destroyAllWindows()
 
 

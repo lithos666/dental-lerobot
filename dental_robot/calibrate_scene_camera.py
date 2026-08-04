@@ -17,7 +17,7 @@
 Usage:
     python -m dental_robot.calibrate_scene_camera
 
-Print a 9x6 chessboard (e.g. OpenCV's pattern, squares of 25 mm), tape it to
+Print a 9x6 chessboard (e.g. OpenCV's pattern, squares of 28.5 mm), tape it to
 something rigid. Show it to the scene camera at varied angles/distances.
 Keys: SPACE = capture a view (need >= 15), c = calibrate & save, q = quit.
 """

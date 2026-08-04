@@ -24,8 +24,8 @@ preset, and adds what the official script lacks for real-robot data:
 
 Usage:
     python -m dental_robot.train_act --dataset_repo_id ${HF_USER}/dental_implant
-    python -m dental_robot.train_act --dataset_repo_id local/dental_implant \
-        --dataset_root data/dental_implant --steps 50000 --batch_size 8 --wandb
+    python -m dental_robot.train_act --dataset_repo_id local/dental_drilling \
+        --dataset_root ./data/dental --steps 50000 --batch_size 8 --wandb
 
     # resume an interrupted run
     python -m dental_robot.train_act --dataset_repo_id ... --resume
@@ -37,6 +37,11 @@ After training, deploy the checkpoint on the robot with:
 IMPORTANT: every training episode must start from the canonical pose produced
 by `align_base` (run phase 1 before each recording), otherwise the deployment
 distribution will not match the training distribution.
+
+IMPORTANT: smooth the recorded joint trajectories before training. Raw
+teleoperated data contains servo jitter which the policy would otherwise
+reproduce at deployment time:
+    python -m dental_robot.smooth_trajectories --dataset_root ./data/dental
 """
 
 import argparse
@@ -99,7 +104,14 @@ def make_dataset(
     cfg: ACTConfig,
     metadata: LeRobotDatasetMetadata,
 ) -> LeRobotDataset:
-    """Instantiate a LeRobotDataset (parquet + video) slice with ACT delta_timestamps."""
+    """Instantiate a LeRobotDataset (parquet + video) slice with ACT delta_timestamps.
+
+    When *episodes* does not start at 0 (e.g. a validation tail [3, 4]),
+    LeRobotDataset builds ``episode_data_index`` with positional indices
+    (0, 1, ...) while ``__getitem__`` reads the *original* episode number
+    from the parquet data.  We patch ``_get_query_indices`` to translate
+    original episode numbers to positional indices so the lookup succeeds.
+    """
     delta_timestamps = resolve_delta_timestamps(cfg, metadata)
     dataset = LeRobotDataset(
         repo_id,
@@ -111,6 +123,19 @@ def make_dataset(
     for key in dataset.meta.camera_keys:
         for stats_type, stats in IMAGENET_STATS.items():
             dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+
+    # --- Fix: map original episode index -> positional index ---
+    # episode_data_index["from"] / ["to"] are positionally indexed (0, 1, ...)
+    # but __getitem__ passes the original episode number from the parquet data.
+    if episodes and episodes[0] != 0:
+        ep_to_pos = {ep: i for i, ep in enumerate(episodes)}
+        _orig_get_query_indices = dataset._get_query_indices
+
+        def _patched_get_query_indices(idx: int, ep_idx: int):
+            return _orig_get_query_indices(idx, ep_to_pos[ep_idx])
+
+        dataset._get_query_indices = _patched_get_query_indices
+
     return dataset
 
 
@@ -140,10 +165,13 @@ def load_checkpoint(
 def validate(policy: ACTPolicy, dataloader: torch.utils.data.DataLoader, device: torch.device) -> dict:
     """Average forward losses over the held-out episodes.
 
-    float64 accumulators: thousands of float32 losses summed naively would lose
-    precision; the batch count is exact so the mean is stable.
+    The policy stays in *train* mode so the CVAE encoder runs (it is gated
+    by ``self.training``); we only disable gradient computation via the
+    ``@torch.no_grad()`` decorator.  Dropout is the only train/eval
+    behavioural difference in ACT's transformer, and keeping it active
+    during validation gives a regularised loss estimate.
     """
-    policy.eval()
+    policy.train()  # keep VAE encoder active (gated by self.training)
     sums: dict[str, float] = {}
     num_batches = 0
     for batch in dataloader:
@@ -153,7 +181,6 @@ def validate(policy: ACTPolicy, dataloader: torch.utils.data.DataLoader, device:
         for key, value in (loss_dict or {}).items():
             sums[key] = sums.get(key, 0.0) + float(value)
         num_batches += 1
-    policy.train()
     if num_batches == 0:
         raise RuntimeError("Validation dataloader is empty, lower --batch_size or --val_episodes")
     return {key: value / num_batches for key, value in sums.items()}
@@ -162,6 +189,8 @@ def validate(policy: ACTPolicy, dataloader: torch.utils.data.DataLoader, device:
 def train(args: argparse.Namespace) -> None:
     init_logging()
     set_seed(args.seed)
+    if args.device is None:
+        args.device = "cuda" if torch.cuda.is_available() else "cpu"
     device = get_safe_torch_device(args.device, log=True)
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -169,6 +198,11 @@ def train(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     checkpoints_dir = output_dir / "checkpoints"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    # Local training history (loss curves) — written alongside the checkpoints so
+    # the curves can be re-plotted without wandb (see dental_robot/make_figures.py).
+    history_csv = output_dir / "train_metrics.csv"
+    if not history_csv.exists():
+        history_csv.write_text("kind,step,loss,l1_loss,kld_loss,grad_norm,lr\n", encoding="utf-8")
 
     wandb_run = None
     if args.wandb:
@@ -182,6 +216,8 @@ def train(args: argparse.Namespace) -> None:
     root = Path(args.dataset_root) if args.dataset_root else None
     metadata = LeRobotDatasetMetadata(args.dataset_repo_id, root=root)
     cfg = make_policy_config(metadata, args)
+    if args.no_pretrained:
+        cfg.pretrained_backbone_weights = None
     train_episodes, val_episodes = split_episodes(metadata.total_episodes, args.val_episodes)
     train_dataset = make_dataset(args.dataset_repo_id, root, train_episodes, cfg, metadata)
     val_loader = None
@@ -189,7 +225,7 @@ def train(args: argparse.Namespace) -> None:
         val_dataset = make_dataset(args.dataset_repo_id, root, val_episodes, cfg, metadata)
         val_loader = torch.utils.data.DataLoader(
             val_dataset,
-            num_workers=args.num_workers,
+            num_workers=0,  # 0: patched dataset is not picklable on Windows
             batch_size=args.batch_size,
             shuffle=False,
             pin_memory=device.type == "cuda",
@@ -276,6 +312,11 @@ def train(args: argparse.Namespace) -> None:
 
         if is_log_step:
             logging.info(train_tracker)
+            with history_csv.open("a", encoding="utf-8") as f:
+                d = train_tracker.to_dict()
+                f.write(
+                    f"train,{step},{d.get('loss', ''):.6f},,,{d.get('grad_norm', ''):.4f},{d.get('lr', ''):.3e}\n"
+                )
             if wandb_run:
                 wandb_log_dict = {f"train/{k}": v for k, v in train_tracker.to_dict().items()}
                 if output_dict:
@@ -287,6 +328,11 @@ def train(args: argparse.Namespace) -> None:
             val_losses = validate(policy, val_loader, device)
             val_msg = " ".join(f"{k}:{v:.4f}" for k, v in val_losses.items())
             logging.info(f"Validation at step {step}: {val_msg}")
+            with history_csv.open("a", encoding="utf-8") as f:
+                f.write(
+                    f"val,{step},{val_losses['loss']:.6f},{val_losses.get('l1_loss', ''):.6f},"
+                    f"{val_losses.get('kld_loss', ''):.6f},,\n"
+                )
             if wandb_run:
                 wandb_run.log({f"val/{k}": v for k, v in val_losses.items()}, step=step)
             if val_losses["loss"] < best_val_loss:
@@ -316,7 +362,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--dataset_repo_id", required=True, help="Dataset repo id used during recording")
-    parser.add_argument("--dataset_root", default=None, help="Local dataset dir (default: HF cache)")
+    parser.add_argument("--dataset_root", default="./data/dental", help="Local dataset dir (default: ./data/dental)")
     parser.add_argument("--output_dir", default=str(DEFAULT_OUTPUT_DIR), help="Where to write checkpoints")
     parser.add_argument("--steps", type=int, default=50_000, help="Number of optimizer updates")
     parser.add_argument("--batch_size", type=int, default=8)
@@ -331,11 +377,12 @@ def main():
     parser.add_argument("--eval_freq", type=int, default=1_000, help="Validation frequency in steps")
     parser.add_argument("--save_freq", type=int, default=5_000)
     parser.add_argument("--seed", type=int, default=1000)
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--device", default=None, help="torch device (default: cuda if available, else cpu)")
     parser.add_argument("--use_amp", action="store_true", help="Mixed-precision training (CUDA only)")
     parser.add_argument("--resume", action="store_true", help="Resume from <output_dir>/checkpoints/last")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb_project", default="dental_robot", help="WandB project name")
+    parser.add_argument("--no_pretrained", action="store_true", help="Skip pretrained ResNet18 weights (use when download fails)")
     args = parser.parse_args()
     train(args)
 

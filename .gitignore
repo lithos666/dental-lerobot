@@ -165,7 +165,9 @@ wandb/
 
 # Data folders
 data/
-outputs/
+outputs/*
+# Portfolio figures are committed (see README)
+!outputs/figures/
 
 # Translations
 *.mo
@@ -181,6 +183,7 @@ outputs/
 dental_robot/scene_camera_intrinsics.npz
 dental_robot/pan_mapping.json
 dental_robot/scene_geometry.json
+dental_robot/start_pose.json
 # Debug / diagnostic images produced during development
 dental_robot/*.png
 # Generated chessboard PDF (regenerate via generate_chessboard.py)
