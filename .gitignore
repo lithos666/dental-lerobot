@@ -164,7 +164,9 @@ wandb/
 .dev/
 
 # Data folders
-data/
+data/*
+# Track the dental dataset (raw episodes, videos, meta) in git/LFS
+!data/dental/
 outputs/*
 # Portfolio figures are committed (see README)
 !outputs/figures/
